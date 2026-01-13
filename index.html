@@ -1,373 +1,318 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>幸運翻牌紅包遊戲</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
+// Simple Pong game
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
 
-        body {
-            font-family: 'Noto Sans TC', sans-serif;
-            background-color: #fef2f2; /* red-50 */
-        }
+  const playerScoreEl = document.getElementById('playerScore');
+  const cpuScoreEl = document.getElementById('cpuScore');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const resetBtn = document.getElementById('resetBtn');
 
-        /* Card Flip Animation Styles */
-        .perspective-1000 {
-            perspective: 1000px;
-        }
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
+
+  // Game settings
+  const PADDLE_WIDTH = 12;
+  const PADDLE_HEIGHT = 100;
+  const PADDLE_SPEED = 6;
+  const CPU_SPEED = 4.2;
+  const BALL_RADIUS = 8;
+  const INITIAL_BALL_SPEED = 4.0;
+  const MAX_BALL_SPEED = 12;
+  const WIN_SCORE = 10;
+
+  // Game state
+  let running = false;
+  let paused = false;
+  let animationId = null;
+
+  const player = {
+    x: 20,
+    y: (HEIGHT - PADDLE_HEIGHT) / 2,
+    width: PADDLE_WIDTH,
+    height: PADDLE_HEIGHT,
+    dy: 0
+  };
+
+  const cpu = {
+    x: WIDTH - 20 - PADDLE_WIDTH,
+    y: (HEIGHT - PADDLE_HEIGHT) / 2,
+    width: PADDLE_WIDTH,
+    height: PADDLE_HEIGHT
+  };
+
+  const ball = {
+    x: WIDTH / 2,
+    y: HEIGHT / 2,
+    r: BALL_RADIUS,
+    speed: INITIAL_BALL_SPEED,
+    vx: 0,
+    vy: 0
+  };
+
+  let scores = { player: 0, cpu: 0 };
+
+  // Helpers
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  function resetBall(direction = (Math.random() < 0.5 ? 1 : -1)) {
+    ball.x = WIDTH / 2;
+    ball.y = HEIGHT / 2;
+    ball.speed = INITIAL_BALL_SPEED;
+    const angle = (Math.random() * 0.6 - 0.3); // -0.3..0.3 radians
+    ball.vx = direction * ball.speed * Math.cos(angle);
+    ball.vy = ball.speed * Math.sin(angle);
+  }
+
+  function drawNet() {
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    const step = 16;
+    for (let y = 0; y < HEIGHT; y += step * 2) {
+      ctx.fillRect(WIDTH / 2 - 1, y, 2, step);
+    }
+  }
+
+  function draw() {
+    // clear
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    // net
+    drawNet();
+
+    // paddles
+    ctx.fillStyle = '#39ff14';
+    roundRect(ctx, player.x, player.y, player.width, player.height, 4, true, false);
+    roundRect(ctx, cpu.x, cpu.y, cpu.width, cpu.height, 4, true, false);
+
+    // ball
+    ctx.beginPath();
+    ctx.fillStyle = '#e6eef8';
+    ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // scores are in DOM, but draw a small center hint
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Pong — Left: Player  •  Right: Computer', WIDTH / 2, 18);
+  }
+
+  // Rounded rect helper
+  function roundRect(ctx, x, y, w, h, r) {
+    if (w < 2 * r) r = w / 2;
+    if (h < 2 * r) r = h / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function update() {
+    if (!running || paused) return;
+
+    // update player position by keys
+    player.y += player.dy;
+    player.y = clamp(player.y, 0, HEIGHT - player.height);
+
+    // CPU movement - follow ball with limited speed
+    const cpuCenter = cpu.y + cpu.height / 2;
+    const diff = ball.y - cpuCenter;
+    if (Math.abs(diff) > 8) {
+      cpu.y += clamp(diff * 0.04, -CPU_SPEED, CPU_SPEED);
+    }
+    cpu.y = clamp(cpu.y, 0, HEIGHT - cpu.height);
+
+    // move ball
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    // top/bottom collision
+    if (ball.y - ball.r <= 0) {
+      ball.y = ball.r;
+      ball.vy = -ball.vy;
+    } else if (ball.y + ball.r >= HEIGHT) {
+      ball.y = HEIGHT - ball.r;
+      ball.vy = -ball.vy;
+    }
+
+    // paddle collision function
+    function paddleCollision(p) {
+      // AABB check
+      if (
+        ball.x - ball.r < p.x + p.width &&
+        ball.x + ball.r > p.x &&
+        ball.y - ball.r < p.y + p.height &&
+        ball.y + ball.r > p.y
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    // left paddle collision
+    if (ball.vx < 0 && paddleCollision(player)) {
+      // prevent sticking
+      ball.x = player.x + player.width + ball.r;
+      collideWithPaddle(player, 1);
+    }
+
+    // right paddle collision
+    if (ball.vx > 0 && paddleCollision(cpu)) {
+      ball.x = cpu.x - ball.r;
+      collideWithPaddle(cpu, -1);
+    }
+
+    // scoring
+    if (ball.x + ball.r < 0) {
+      // CPU scores
+      scores.cpu += 1;
+      cpuScoreEl.textContent = scores.cpu;
+      checkGameOver();
+      resetBall(1);
+    } else if (ball.x - ball.r > WIDTH) {
+      // Player scores
+      scores.player += 1;
+      playerScoreEl.textContent = scores.player;
+      checkGameOver();
+      resetBall(-1);
+    }
+  }
+
+  function checkGameOver() {
+    if (scores.player >= WIN_SCORE || scores.cpu >= WIN_SCORE) {
+      running = false;
+      paused = true;
+      // announce winner via alert (simple)
+      const winner = scores.player >= WIN_SCORE ? 'Player' : 'Computer';
+      setTimeout(() => {
+        alert(`${winner} wins! Final score: Player ${scores.player} — CPU ${scores.cpu}`);
+      }, 50);
+    }
+  }
+
+  function collideWithPaddle(paddle, directionSign) {
+    // directionSign: 1 if ball comes from left (bounce right), -1 if from right (bounce left)
+    // compute where the ball hit the paddle relative to its center to vary angle
+    const paddleCenter = paddle.y + paddle.height / 2;
+    const relativeIntersectY = (ball.y - paddleCenter) / (paddle.height / 2);
+    const maxBounceAngle = (75 * Math.PI) / 180; // in radians
+    const bounceAngle = clamp(relativeIntersectY, -1, 1) * maxBounceAngle;
+
+    // increase speed slightly
+    ball.speed = Math.min(ball.speed + 0.35, MAX_BALL_SPEED);
+
+    // set velocities based on calculated angle
+    ball.vx = directionSign * ball.speed * Math.cos(bounceAngle);
+    ball.vy = ball.speed * Math.sin(bounceAngle);
+
+    // add a tiny nudge based on paddle move (player dy)
+    ball.vy += player.dy * 0.15;
+  }
+
+  // input handling
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp') {
+      player.dy = -PADDLE_SPEED;
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      player.dy = PADDLE_SPEED;
+      e.preventDefault();
+    } else if (e.key === ' ' ) {
+      // space toggles pause
+      togglePause();
+      e.preventDefault();
+    }
+  });
+
+  window.addEventListener('keyup', (e) => {
+    if ((e.key === 'ArrowUp' && player.dy < 0) || (e.key === 'ArrowDown' && player.dy > 0)) {
+      player.dy = 0;
+    }
+  });
+
+  // mouse control: move left paddle with mouse within canvas
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseY = e.clientY - rect.top;
+    player.y = clamp(mouseY - player.height / 2, 0, HEIGHT - player.height);
+  });
+
+  // buttons
+  startBtn.addEventListener('click', () => {
+    if (!running) {
+      startGame();
+    } else if (paused) {
+      paused = false;
+      pauseBtn.textContent = 'Pause';
+    }
+  });
+
+  pauseBtn.addEventListener('click', () => {
+    togglePause();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    resetGame();
+  });
+
+  function togglePause() {
+    if (!running) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  }
+
+  function startGame() {
+    if (!running) {
+      running = true;
+      paused = false;
+      scores.player = 0;
+      scores.cpu = 0;
+      playerScoreEl.textContent = scores.player;
+      cpuScoreEl.textContent = scores.cpu;
+      player.y = (HEIGHT - player.height) / 2;
+      cpu.y = (HEIGHT - cpu.height) / 2;
+      resetBall(Math.random() < 0.5 ? 1 : -1);
+      pauseBtn.textContent = 'Pause';
+      loop();
+    } else {
+      paused = false;
+    }
+  }
+
+  function resetGame() {
+    running = false;
+    paused = false;
+    scores.player = 0;
+    scores.cpu = 0;
+    playerScoreEl.textContent = 0;
+    cpuScoreEl.textContent = 0;
+    player.y = (HEIGHT - player.height) / 2;
+    cpu.y = (HEIGHT - cpu.height) / 2;
+    resetBall( (Math.random() < 0.5) ? 1 : -1 );
+    draw();
+    if (animationId) cancelAnimationFrame(animationId);
+  }
+
+  function loop() {
+    update();
+    draw();
+    animationId = requestAnimationFrame(loop);
+  }
+
+  // initial draw
+  resetBall(1);
+  draw();
+
+  // Allow the game to start by clicking Start
+  // but also allow pressing Space (toggle) after start
+  // Expose simple API on window for debugging
+  window._pong = {
+    startGame, resetGame
+  };
+})();
         
-        .transform-style-3d {
-            transform-style: preserve-3d;
-        }
-        
-        .backface-hidden {
-            backface-visibility: hidden;
-        }
-        
-        .rotate-y-180 {
-            transform: rotateY(180deg);
-        }
-
-        /* Red Envelope Animation */
-        @keyframes openEnvelope {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(0); opacity: 0; }
-        }
-
-        .animate-open {
-            animation: openEnvelope 0.5s forwards;
-        }
-
-        @keyframes popIn {
-            0% { transform: scale(0.5); opacity: 0; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-
-        .animate-pop-in {
-            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-        }
-        
-        .coin-bg {
-            background-image: radial-gradient(#fbbf24 15%, transparent 16%), radial-gradient(#fbbf24 15%, transparent 16%);
-            background-size: 20px 20px;
-            background-position: 0 0, 10px 10px;
-            opacity: 0.1;
-        }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden">
-
-    <!-- Decorative Background -->
-    <div class="absolute inset-0 coin-bg pointer-events-none"></div>
-
-    <!-- Header -->
-    <header class="text-center mb-6 z-10">
-        <h1 class="text-3xl md:text-4xl font-bold text-red-600 mb-2 drop-shadow-sm">🧧 幸運翻牌拿紅包 🧧</h1>
-        <div class="inline-flex items-center bg-white px-4 py-2 rounded-full shadow-md border-2 border-red-100">
-            <span class="text-gray-600 mr-2">時間:</span>
-            <span id="timer" class="text-2xl font-mono font-bold text-red-500 w-16 text-center">0</span>
-            <span class="text-sm text-gray-400 ml-1">秒</span>
-        </div>
-    </header>
-
-    <!-- Game Board -->
-    <div id="game-board" class="grid grid-cols-4 gap-3 md:gap-4 w-full max-w-md mx-auto z-10 perspective-1000">
-        <!-- Cards will be generated here by JavaScript -->
-    </div>
-
-    <!-- Controls -->
-    <div class="mt-8 z-10">
-        <button onclick="initGame()" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-8 rounded-full shadow-lg transform transition active:scale-95 flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
-            </svg>
-            重置遊戲
-        </button>
-    </div>
-
-    <!-- Red Envelope Modal -->
-    <div id="modal-overlay" class="fixed inset-0 bg-black bg-opacity-60 z-50 hidden flex items-center justify-center backdrop-blur-sm">
-        
-        <!-- Closed Envelope State -->
-        <div id="envelope-closed" class="relative w-72 h-96 bg-red-600 rounded-lg shadow-2xl cursor-pointer transform hover:scale-105 transition-transform duration-300 flex flex-col items-center justify-center border-4 border-yellow-400 hidden">
-            <div class="absolute top-0 w-full h-1/3 bg-red-700 rounded-b-full shadow-inner z-10 border-b-2 border-yellow-500"></div>
-            <div class="z-20 flex flex-col items-center">
-                <div class="w-20 h-20 bg-yellow-400 rounded-full flex items-center justify-center shadow-lg mb-4 border-4 border-yellow-200">
-                    <span class="text-4xl font-bold text-red-600">開</span>
-                </div>
-                <h2 class="text-2xl font-bold text-yellow-100 mt-4">恭喜通關！</h2>
-                <p class="text-yellow-200 text-sm mt-2">點擊開啟你的紅包</p>
-            </div>
-        </div>
-
-        <!-- Result State -->
-        <div id="result-card" class="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-0 hidden relative overflow-hidden border-4 border-red-100">
-            <!-- Confetti decoration -->
-            <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-yellow-400 to-red-500"></div>
-            
-            <h2 class="text-3xl font-bold text-gray-800 mb-2">🎉 獲得獎金 🎉</h2>
-            <div class="my-6 relative">
-                <div class="text-6xl font-bold text-red-600 tracking-tighter drop-shadow-md">
-                    $<span id="prize-amount">0</span>
-                </div>
-                <div class="text-sm text-gray-500 mt-2 font-medium">
-                    耗時: <span id="final-time">0</span> 秒
-                </div>
-            </div>
-            
-            <p id="comment-text" class="text-lg text-yellow-600 font-bold mb-6">手速驚人！</p>
-
-            <button onclick="closeModal()" class="w-full bg-yellow-400 hover:bg-yellow-500 text-red-700 font-bold py-3 px-6 rounded-xl shadow-md transition-colors">
-                收下禮物再玩一次
-            </button>
-        </div>
-    </div>
-
-    <script>
-        // Game Configuration
-        const icons = ['🐱', '🐶', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼'];
-        let cards = []; // Will hold pairs of icons
-        let hasFlippedCard = false;
-        let lockBoard = false;
-        let firstCard, secondCard;
-        let matchedPairs = 0;
-        let timerInterval;
-        let seconds = 0;
-        let gameActive = false;
-
-        // DOM Elements
-        const gameBoard = document.getElementById('game-board');
-        const timerDisplay = document.getElementById('timer');
-        const modalOverlay = document.getElementById('modal-overlay');
-        const envelopeClosed = document.getElementById('envelope-closed');
-        const resultCard = document.getElementById('result-card');
-        const prizeAmountDisplay = document.getElementById('prize-amount');
-        const finalTimeDisplay = document.getElementById('final-time');
-        const commentText = document.getElementById('comment-text');
-
-        // Initialize Game
-        function initGame() {
-            // Reset state
-            matchedPairs = 0;
-            seconds = 0;
-            hasFlippedCard = false;
-            lockBoard = false;
-            firstCard = null;
-            secondCard = null;
-            gameActive = true;
-            
-            // Reset UI
-            timerDisplay.innerText = '0';
-            gameBoard.innerHTML = '';
-            clearInterval(timerInterval);
-            
-            // Prepare cards
-            cards = [...icons, ...icons]; // Duplicate for pairs
-            shuffle(cards);
-            
-            // Generate Grid
-            cards.forEach(icon => {
-                const card = createCard(icon);
-                gameBoard.appendChild(card);
-            });
-
-            // Start Timer
-            startTimer();
-        }
-
-        // Create Card Element
-        function createCard(icon) {
-            const card = document.createElement('div');
-            card.classList.add('relative', 'w-full', 'h-24', 'cursor-pointer', 'transform-style-3d', 'transition-transform', 'duration-500');
-            card.dataset.icon = icon;
-
-            // Front face (Question mark / Pattern)
-            const frontFace = document.createElement('div');
-            frontFace.classList.add('absolute', 'inset-0', 'bg-red-500', 'rounded-xl', 'flex', 'items-center', 'justify-center', 'text-white', 'text-3xl', 'backface-hidden', 'shadow-md', 'border-2', 'border-red-300');
-            frontFace.innerHTML = '❓';
-
-            // Back face (Icon)
-            const backFace = document.createElement('div');
-            backFace.classList.add('absolute', 'inset-0', 'bg-white', 'rounded-xl', 'flex', 'items-center', 'justify-center', 'text-4xl', 'backface-hidden', 'rotate-y-180', 'shadow-md', 'border-2', 'border-yellow-400');
-            backFace.innerHTML = icon;
-
-            card.appendChild(frontFace);
-            card.appendChild(backFace);
-
-            card.addEventListener('click', flipCard);
-            return card;
-        }
-
-        // Shuffle Array (Fisher-Yates)
-        function shuffle(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-        }
-
-        // Timer Logic
-        function startTimer() {
-            timerInterval = setInterval(() => {
-                seconds++;
-                timerDisplay.innerText = seconds;
-            }, 1000);
-        }
-
-        // Card Flip Logic
-        function flipCard() {
-            if (lockBoard) return;
-            if (this === firstCard) return;
-
-            this.classList.add('rotate-y-180');
-
-            if (!hasFlippedCard) {
-                // First card
-                hasFlippedCard = true;
-                firstCard = this;
-                return;
-            }
-
-            // Second card
-            secondCard = this;
-            checkForMatch();
-        }
-
-        // Check Match
-        function checkForMatch() {
-            let isMatch = firstCard.dataset.icon === secondCard.dataset.icon;
-            isMatch ? disableCards() : unflipCards();
-        }
-
-        function disableCards() {
-            firstCard.removeEventListener('click', flipCard);
-            secondCard.removeEventListener('click', flipCard);
-            
-            // Visual cue for match
-            setTimeout(() => {
-                firstCard.querySelector('div:nth-child(2)').classList.add('bg-yellow-50');
-                secondCard.querySelector('div:nth-child(2)').classList.add('bg-yellow-50');
-            }, 300);
-
-            resetBoard();
-            matchedPairs++;
-
-            if (matchedPairs === icons.length) {
-                endGame();
-            }
-        }
-
-        function unflipCards() {
-            lockBoard = true;
-            setTimeout(() => {
-                firstCard.classList.remove('rotate-y-180');
-                secondCard.classList.remove('rotate-y-180');
-                resetBoard();
-            }, 1000);
-        }
-
-        function resetBoard() {
-            [hasFlippedCard, lockBoard] = [false, false];
-            [firstCard, secondCard] = [null, null];
-        }
-
-        // End Game & Reward Logic
-        function endGame() {
-            clearInterval(timerInterval);
-            gameActive = false;
-            
-            // Delay slightly to show final card flip
-            setTimeout(() => {
-                showRedEnvelope();
-            }, 600);
-        }
-
-        function showRedEnvelope() {
-            modalOverlay.classList.remove('hidden');
-            envelopeClosed.classList.remove('hidden');
-            resultCard.classList.add('hidden');
-            
-            // Setup click handler for opening
-            envelopeClosed.onclick = openEnvelope;
-        }
-
-        function calculatePrize(timeTaken) {
-            // Logic: faster = more money.
-            // Max prize: 500, Min prize: 50.
-            // Let's say 15 seconds is "perfect" score (500).
-            // Every second after that deducts money.
-            
-            const maxPrize = 500;
-            const minPrize = 50;
-            const perfectTime = 15; 
-            const penaltyPerSecond = 8; // Lose $8 per extra second
-
-            let prize = maxPrize;
-
-            if (timeTaken > perfectTime) {
-                prize = maxPrize - ((timeTaken - perfectTime) * penaltyPerSecond);
-            }
-
-            // Clamp the value between 50 and 500
-            prize = Math.max(minPrize, Math.min(maxPrize, Math.floor(prize)));
-
-            return prize;
-        }
-
-        function getComment(prize) {
-            if (prize >= 450) return "太神啦！閃電般的速度！⚡️";
-            if (prize >= 300) return "眼明手快，運氣不錯！👍";
-            if (prize >= 150) return "穩紮穩打，再接再厲！💪";
-            return "雖然慢了點，但這份心意最重要！❤️";
-        }
-
-        function openEnvelope() {
-            const prize = calculatePrize(seconds);
-            const comment = getComment(prize);
-
-            // Animate Envelope opening
-            envelopeClosed.classList.add('animate-open');
-
-            // Wait for animation then show result
-            setTimeout(() => {
-                envelopeClosed.classList.add('hidden');
-                envelopeClosed.classList.remove('animate-open'); // Reset for next time
-                
-                resultCard.classList.remove('hidden');
-                resultCard.classList.add('animate-pop-in');
-                
-                // Count up animation for number
-                animateValue(prizeAmountDisplay, 0, prize, 1000);
-                finalTimeDisplay.innerText = seconds;
-                commentText.innerText = comment;
-            }, 400);
-        }
-
-        function animateValue(obj, start, end, duration) {
-            let startTimestamp = null;
-            const step = (timestamp) => {
-                if (!startTimestamp) startTimestamp = timestamp;
-                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-                obj.innerHTML = Math.floor(progress * (end - start) + start);
-                if (progress < 1) {
-                    window.requestAnimationFrame(step);
-                }
-            };
-            window.requestAnimationFrame(step);
-        }
-
-        function closeModal() {
-            modalOverlay.classList.add('hidden');
-            resultCard.classList.remove('animate-pop-in');
-            initGame(); // Auto restart
-        }
-
-        // Start game on load
-        window.onload = initGame;
-
-    </script>
-</body>
-</html>
